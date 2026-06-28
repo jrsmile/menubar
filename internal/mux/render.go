@@ -1,6 +1,7 @@
 package mux
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -20,6 +21,9 @@ func (a *App) draw() {
 	}
 	if a.cmdMenuOpen {
 		a.drawCmdDropdown()
+	}
+	if len(a.popups) > 0 {
+		a.drawPopup(a.popups[0])
 	}
 
 	a.screen.Show()
@@ -50,7 +54,7 @@ func (a *App) drawPane(w, h int) {
 	visible := term.CursorVisible()
 	term.Unlock()
 
-	if visible && !a.menuOpen {
+	if visible && !a.menuOpen && !a.cmdMenuOpen && len(a.popups) == 0 {
 		a.screen.ShowCursor(cur.X, cur.Y+1)
 	} else {
 		a.screen.HideCursor()
@@ -161,6 +165,108 @@ func drawText(s tcell.Screen, x, y int, text string, style tcell.Style) {
 		x++
 	}
 }
+
+// drawPopup paints a centered modal box containing text and an OK button along
+// the bottom. It records the OK button's hit-box in popupOK* for click matching.
+func (a *App) drawPopup(text string) {
+	w, h := a.screen.Size()
+
+	maxW := w - 4
+	if maxW < 10 {
+		maxW = 10
+	}
+	maxLines := h - 6
+	if maxLines < 1 {
+		maxLines = 1
+	}
+
+	var lines []string
+	for _, ln := range strings.Split(text, "\n") {
+		lines = append(lines, wrapLine(ln, maxW)...)
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines[len(lines)-1] = "…"
+	}
+
+	const okLabel = "[ OK ]"
+	contentW := len(okLabel)
+	for _, ln := range lines {
+		if l := runeLen(ln); l > contentW {
+			contentW = l
+		}
+	}
+
+	boxW := contentW + 4 // 1-col border + 1-col padding on each side
+	boxH := len(lines) + 4
+	if boxW > w {
+		boxW = w
+	}
+	if boxH > h {
+		boxH = h
+	}
+
+	x0 := (w - boxW) / 2
+	y0 := (h - boxH) / 2
+
+	box := tcell.StyleDefault.Background(tcell.ColorSilver).Foreground(tcell.ColorBlack)
+	okStyle := tcell.StyleDefault.Background(tcell.ColorTeal).Foreground(tcell.ColorWhite).Bold(true)
+
+	for y := 0; y < boxH; y++ {
+		for x := 0; x < boxW; x++ {
+			ch := ' '
+			switch {
+			case y == 0 && x == 0:
+				ch = '┌'
+			case y == 0 && x == boxW-1:
+				ch = '┐'
+			case y == boxH-1 && x == 0:
+				ch = '└'
+			case y == boxH-1 && x == boxW-1:
+				ch = '┘'
+			case y == 0 || y == boxH-1:
+				ch = '─'
+			case x == 0 || x == boxW-1:
+				ch = '│'
+			}
+			a.screen.SetContent(x0+x, y0+y, ch, nil, box)
+		}
+	}
+
+	for i, ln := range lines {
+		drawText(a.screen, x0+2, y0+1+i, ln, box)
+	}
+
+	okX := x0 + (boxW-len(okLabel))/2
+	okY := y0 + boxH - 2
+	drawText(a.screen, okX, okY, okLabel, okStyle)
+
+	a.popupOKX = okX
+	a.popupOKY = okY
+	a.popupOKW = len(okLabel)
+}
+
+// wrapLine hard-wraps s into chunks of at most max runes, preserving an empty
+// line for empty input.
+func wrapLine(s string, max int) []string {
+	if max < 1 {
+		max = 1
+	}
+	r := []rune(s)
+	if len(r) == 0 {
+		return []string{""}
+	}
+	var out []string
+	for len(r) > max {
+		out = append(out, string(r[:max]))
+		r = r[max:]
+	}
+	return append(out, string(r))
+}
+
+// runeLen returns the number of runes in s (its rendered column width for the
+// plain text shown in popups).
+func runeLen(s string) int { return len([]rune(s)) }
 
 // glyphStyle translates a vt10x glyph into a tcell style. vt10x already bakes
 // reverse-video (FG/BG swap) and bright-bold colours into the glyph, so we only

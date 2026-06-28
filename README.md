@@ -17,6 +17,10 @@ button presses on its own menu bar.
 - **Command menu** — an optional `[Commands]` button driven by a TOML file, with
   arbitrarily nested submenus; clicking an entry runs its command in a new pane
   rooted at the visible shell's working directory.
+- **Popups** — show a modal message box from inside a pane with
+  `menubar --notify "text"`, or run a menu command in the background and display
+  its output in a popup (`popup = true`). Popups stay up until their `[ OK ]`
+  button is clicked.
 - **Full key passthrough** — keys, including `Ctrl-C` and other control
   combinations, go to the active pane unchanged.
 - **PuTTY-friendly** — only button presses are captured, leaving PuTTY's
@@ -52,6 +56,7 @@ The shell launched in each pane is taken from `$SHELL` (falling back to
 | Close active pane | Menu → **Close Pane**, or click `[X]` top-right    |
 | Open command menu | Click `[Commands]` (shown only when configured)    |
 | Run a command     | Commands → entry; `..` ascends, `>` opens a submenu |
+| Dismiss a popup   | Click the `[ OK ]` button inside the popup          |
 | Quit              | Close the last remaining pane                      |
 | Select / paste    | Use your terminal's native Shift+click / paste     |
 
@@ -80,6 +85,11 @@ command = "go test ./..."
 close_after = true              # pane closes automatically once the command exits
 
 [[item]]
+label = "Disk usage"
+command = "df -h"
+popup = true                    # runs in the background; output shown in a popup
+
+[[item]]
 label = "Git"
   [[item.submenu]]
   label = "Status"
@@ -96,7 +106,27 @@ Per-entry fields:
 | `label`       | Text shown in the menu.                                          |
 | `command`     | Shell command to run (leaf entries).                            |
 | `close_after` | `true` closes the pane when the command finishes; default keeps it open. |
+| `popup`       | `true` runs the command in the background and shows its output in a popup instead of a pane. |
 | `submenu`     | Nested `[[item.submenu]]` entries (branch entries).             |
+
+## Popups & notifications
+
+Popups are modal message boxes drawn over the screen; each stays visible until
+its `[ OK ]` button is clicked.
+
+From inside any pane you can raise a popup with the `--notify` flag:
+
+```sh
+menubar --notify "build finished"
+```
+
+This works because each pane inherits a `MENUBAR_SOCK` environment variable
+pointing at the parent process's control socket; `--notify` simply sends the
+text there. Running `menubar --notify` outside a menubar pane (no
+`MENUBAR_SOCK`) prints an error and exits non-zero.
+
+Menu entries with `popup = true` (see above) run their command in the background
+and display the combined output in a popup instead of opening a pane.
 
 ## Architecture
 

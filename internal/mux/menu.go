@@ -108,6 +108,12 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	x, y := ev.Position()
 	w, _ := a.screen.Size()
 
+	// A popup is modal: it consumes every click and only its OK button matters.
+	if len(a.popups) > 0 {
+		a.handlePopupClick(x, y)
+		return
+	}
+
 	if y == 0 {
 		a.handleMenuBarClick(x, w)
 		return
@@ -199,8 +205,19 @@ func (a *App) handleCmdDropdownClick(x, y int) bool {
 		a.buildCmdMenu()
 		return true
 	}
-	// Leaf: run the command in a new pane.
+	// Leaf: run the command, either in a new pane or as a background popup.
 	a.cmdMenuOpen = false
-	a.runCommandInNewPane(e.Command, e.CloseAfter)
+	if e.Popup {
+		a.runCommandPopup(e.Command)
+	} else {
+		a.runCommandInNewPane(e.Command, e.CloseAfter)
+	}
 	return true
+}
+
+// handlePopupClick dismisses the current popup if its OK button was clicked.
+func (a *App) handlePopupClick(x, y int) {
+	if y == a.popupOKY && x >= a.popupOKX && x < a.popupOKX+a.popupOKW {
+		a.dismissPopup()
+	}
 }

@@ -12,11 +12,14 @@ import (
 
 // MenuEntry is one entry in the command menu. An entry with a Submenu acts as a
 // branch; an entry with a Command acts as a runnable leaf. CloseAfter controls
-// whether the spawned pane closes once the command finishes.
+// whether the spawned pane closes once the command finishes. When Popup is true
+// the command runs in the background and its output is shown in a popup instead
+// of in a new pane.
 type MenuEntry struct {
 	Label      string      `toml:"label"`
 	Command    string      `toml:"command"`
 	CloseAfter bool        `toml:"close_after"`
+	Popup      bool        `toml:"popup"`
 	Submenu    []MenuEntry `toml:"submenu"`
 }
 

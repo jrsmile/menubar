@@ -4,6 +4,12 @@ package mux
 
 import (
 	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -36,6 +42,19 @@ type App struct {
 	cmdPath      []int
 	cmdMenuWidth int
 
+	// popups is a FIFO queue of modal messages; the first is shown until its OK
+	// button is clicked. popupOK* records the OK button hit-box from the last
+	// draw so clicks can be matched against it.
+	popups   []string
+	popupOKX int
+	popupOKY int
+	popupOKW int
+
+	// notifyLn is the Unix socket that child `menubar --notify` processes connect
+	// to; sockPath is its filesystem path (removed on shutdown).
+	notifyLn net.Listener
+	sockPath string
+
 	dirty chan struct{}
 	quit  bool
 }
@@ -66,8 +85,55 @@ func New(screen tcell.Screen, shell string, cmdMenu []config.MenuEntry) *App {
 		}
 	}()
 
+	a.startNotifyServer()
 	a.newPane()
 	return a
+}
+
+// startNotifyServer opens a per-process Unix socket and exports its path via the
+// MENUBAR_SOCK environment variable, which panes inherit. Child processes run as
+// `menubar --notify "text"` connect to it to request a popup. Failure to open
+// the socket simply disables the notify feature.
+func (a *App) startNotifyServer() {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	if base == "" {
+		base = os.TempDir()
+	}
+	path := filepath.Join(base, fmt.Sprintf("menubar-%d.sock", os.Getpid()))
+	_ = os.Remove(path)
+
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return
+	}
+	_ = os.Chmod(path, 0o600)
+
+	a.notifyLn = ln
+	a.sockPath = path
+	_ = os.Setenv("MENUBAR_SOCK", path)
+
+	go a.acceptNotify(ln)
+}
+
+// acceptNotify serves notify connections, posting each received message as a
+// popup on the main event loop. Messages are size-limited and treated as plain
+// text (never interpreted as commands or escape sequences).
+func (a *App) acceptNotify(ln net.Listener) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			data, _ := io.ReadAll(io.LimitReader(c, 64*1024))
+			text := strings.TrimRight(string(data), "\n")
+			if text != "" {
+				_ = a.screen.PostEvent(notifyEvent{text: text})
+			}
+		}(conn)
+	}
 }
 
 // notifyRedraw is the non-blocking signal pane goroutines call on new output.
@@ -136,6 +202,44 @@ func (a *App) runCommandInNewPane(command string, closeAfter bool) {
 	a.panes[a.active].Write([]byte(command + suffix))
 }
 
+// runCommandPopup runs command in the background (via the shell) rooted at the
+// visible pane's working directory and posts its combined output as a popup. It
+// does not open a pane.
+func (a *App) runCommandPopup(command string) {
+	if command == "" {
+		return
+	}
+	dir := ""
+	if len(a.panes) > 0 {
+		dir = a.panes[a.active].Cwd()
+	}
+	go func() {
+		cmd := exec.Command(a.shell, "-c", command)
+		cmd.Dir = dir
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		text := string(out)
+		if err != nil {
+			if text != "" && !strings.HasSuffix(text, "\n") {
+				text += "\n"
+			}
+			text += "[" + err.Error() + "]"
+		}
+		if strings.TrimSpace(text) == "" {
+			text = "(no output)"
+		}
+		_ = a.screen.PostEvent(notifyEvent{text: text})
+	}()
+}
+
+// dismissPopup removes the currently displayed popup, revealing the next queued
+// one if any.
+func (a *App) dismissPopup() {
+	if len(a.popups) > 0 {
+		a.popups = a.popups[1:]
+	}
+}
+
 func (a *App) setActive(i int) {
 	if i < 0 || i >= len(a.panes) {
 		return
@@ -185,6 +289,10 @@ func (a *App) resize() {
 }
 
 func (a *App) handleKey(ev *tcell.EventKey) {
+	if len(a.popups) > 0 {
+		// A popup is modal: swallow keys until its OK button is clicked.
+		return
+	}
 	if a.menuOpen || a.cmdMenuOpen {
 		if ev.Key() == tcell.KeyEsc {
 			a.menuOpen = false
@@ -221,6 +329,8 @@ func (a *App) Run() {
 			a.handleMouse(ev)
 		case paneExitEvent:
 			a.removePaneByID(ev.id)
+		case notifyEvent:
+			a.popups = append(a.popups, ev.text)
 		case redrawEvent:
 			// fall through to repaint
 		}
@@ -229,6 +339,12 @@ func (a *App) Run() {
 }
 
 func (a *App) closeAll() {
+	if a.notifyLn != nil {
+		_ = a.notifyLn.Close()
+	}
+	if a.sockPath != "" {
+		_ = os.Remove(a.sockPath)
+	}
 	for _, p := range a.panes {
 		p.Close()
 	}

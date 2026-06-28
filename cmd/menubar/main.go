@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/gdamore/tcell/v2"
@@ -20,15 +21,33 @@ func main() {
 	var (
 		showVersion bool
 		configPath  string
+		notifyText  string
 	)
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.BoolVar(&showVersion, "v", false, "print version and exit (shorthand)")
 	flag.StringVar(&configPath, "config", "", "path to the command-menu TOML file")
 	flag.StringVar(&configPath, "c", "", "path to the command-menu TOML file (shorthand)")
+	flag.StringVar(&notifyText, "notify", "", "show text as a popup in the parent menubar (run inside a pane)")
 	flag.Parse()
 
 	if showVersion {
 		fmt.Println("menubar", version)
+		return
+	}
+
+	// --notify runs as a thin client: send the text to the parent menubar's
+	// socket and exit, without starting a screen of our own.
+	notifySet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "notify" {
+			notifySet = true
+		}
+	})
+	if notifySet {
+		if err := sendNotify(notifyText); err != nil {
+			fmt.Fprintln(os.Stderr, "menubar:", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -70,4 +89,20 @@ func main() {
 
 	screen.DisableMouse()
 	screen.Fini()
+}
+
+// sendNotify connects to the parent menubar's notify socket (advertised via the
+// MENUBAR_SOCK environment variable) and asks it to display text in a popup.
+func sendNotify(text string) error {
+	sock := os.Getenv("MENUBAR_SOCK")
+	if sock == "" {
+		return fmt.Errorf("--notify must be run inside a menubar pane")
+	}
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, err = conn.Write([]byte(text))
+	return err
 }
