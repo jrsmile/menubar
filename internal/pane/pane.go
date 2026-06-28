@@ -3,6 +3,7 @@
 package pane
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"sync"
@@ -31,8 +32,9 @@ type Pane struct {
 }
 
 // New spawns a shell in a fresh PTY sized to cols x rows and attaches a vt10x
-// terminal emulator to it.
-func New(id int, shell string, cols, rows int) (*Pane, error) {
+// terminal emulator to it. If dir is non-empty the shell starts in that working
+// directory; otherwise it inherits the parent process's directory.
+func New(id int, shell, dir string, cols, rows int) (*Pane, error) {
 	if rows < 1 {
 		rows = 1
 	}
@@ -42,6 +44,9 @@ func New(id int, shell string, cols, rows int) (*Pane, error) {
 
 	cmd := exec.Command(shell)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	if dir != "" {
+		cmd.Dir = dir
+	}
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(rows),
@@ -63,6 +68,20 @@ func New(id int, shell string, cols, rows int) (*Pane, error) {
 
 // ID returns the pane's stable identifier.
 func (p *Pane) ID() int { return p.id }
+
+// Cwd returns the current working directory of the pane's shell process, or an
+// empty string if it cannot be determined. It relies on the Linux /proc
+// filesystem; on platforms without /proc it returns "".
+func (p *Pane) Cwd() string {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return ""
+	}
+	dir, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", p.cmd.Process.Pid))
+	if err != nil {
+		return ""
+	}
+	return dir
+}
 
 // Term exposes the emulator view for rendering and mode queries.
 func (p *Pane) Term() vt10x.Terminal { return p.term }

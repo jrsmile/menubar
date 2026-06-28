@@ -14,6 +14,9 @@ button presses on its own menu bar.
 - **Tabbed panes** — one visible shell at a time, switched via the menu.
 - **Mouse-only controls** — a `[Menu]` button (left), the active pane title and
   a live clock (center/right), and an `[X]` close button (top-right).
+- **Command menu** — an optional `[Commands]` button driven by a TOML file, with
+  arbitrarily nested submenus; clicking an entry runs its command in a new pane
+  rooted at the visible shell's working directory.
 - **Full key passthrough** — keys, including `Ctrl-C` and other control
   combinations, go to the active pane unchanged.
 - **PuTTY-friendly** — only button presses are captured, leaving PuTTY's
@@ -47,8 +50,53 @@ The shell launched in each pane is taken from `$SHELL` (falling back to
 | New pane          | Menu → **New Pane**                                |
 | Switch pane       | Menu → **Go to Pane N** (the active one is marked) |
 | Close active pane | Menu → **Close Pane**, or click `[X]` top-right    |
+| Open command menu | Click `[Commands]` (shown only when configured)    |
+| Run a command     | Commands → entry; `..` ascends, `>` opens a submenu |
 | Quit              | Close the last remaining pane                      |
 | Select / paste    | Use your terminal's native Shift+click / paste     |
+
+## Command menu
+
+The `[Commands]` button appears when a command-menu TOML file is found. By
+default it is read from `~/.config/menubar/menu.toml`; pass `--config`/`-c` to
+point at a different file:
+
+```sh
+./menubar --config ./menu.toml
+```
+
+Each `[[item]]` is either a runnable leaf (with a `command`) or a branch (with a
+`submenu`). Submenus may nest to any depth. Clicking a leaf opens a new pane in
+the **current working directory of the visible shell** and runs the command.
+
+```toml
+[[item]]
+label = "Build"
+command = "make build"          # stays open; output visible until closed manually
+
+[[item]]
+label = "Run tests"
+command = "go test ./..."
+close_after = true              # pane closes automatically once the command exits
+
+[[item]]
+label = "Git"
+  [[item.submenu]]
+  label = "Status"
+  command = "git status"
+  [[item.submenu]]
+  label = "Log"
+  command = "git log --oneline"
+```
+
+Per-entry fields:
+
+| Field         | Meaning                                                          |
+| ------------- | ---------------------------------------------------------------- |
+| `label`       | Text shown in the menu.                                          |
+| `command`     | Shell command to run (leaf entries).                            |
+| `close_after` | `true` closes the pane when the command finishes; default keeps it open. |
+| `submenu`     | Nested `[[item.submenu]]` entries (branch entries).             |
 
 ## Architecture
 

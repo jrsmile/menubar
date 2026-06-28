@@ -18,6 +18,9 @@ func (a *App) draw() {
 	if a.menuOpen {
 		a.drawDropdown()
 	}
+	if a.cmdMenuOpen {
+		a.drawCmdDropdown()
+	}
 
 	a.screen.Show()
 }
@@ -64,19 +67,25 @@ func (a *App) drawMenuBar(w int) {
 
 	drawText(a.screen, 0, 0, menuButtonLabel, bar.Bold(true))
 
+	leftEnd := len(menuButtonLabel)
+	if a.hasCmdMenu() {
+		drawText(a.screen, leftEnd, 0, cmdButtonLabel, bar.Bold(true))
+		leftEnd += len(cmdButtonLabel)
+	}
+
 	clock := time.Now().Format("15:04:05")
 	clockStart := w - len(xButtonLabel) - 1 - len(clock)
 
 	title := a.title()
-	maxTitle := clockStart - 1 - (len(menuButtonLabel) + 1)
+	maxTitle := clockStart - 1 - (leftEnd + 1)
 	if maxTitle > 0 {
 		if len(title) > maxTitle {
 			title = title[:maxTitle]
 		}
-		drawText(a.screen, len(menuButtonLabel)+1, 0, title, bar)
+		drawText(a.screen, leftEnd+1, 0, title, bar)
 	}
 
-	if clockStart > len(menuButtonLabel) {
+	if clockStart > leftEnd {
 		drawText(a.screen, clockStart, 0, clock, bar)
 	}
 
@@ -103,6 +112,45 @@ func (a *App) drawDropdown() {
 		copy(row, []rune(" "+it.label))
 		for j, r := range row {
 			a.screen.SetContent(j, i+1, r, nil, style)
+		}
+	}
+}
+
+// drawCmdDropdown paints the user-defined command menu below the [Commands]
+// button. It shows the current drill-down level: a ".." back row when nested,
+// each entry's label, and a ">" marker on entries that open a submenu.
+func (a *App) drawCmdDropdown() {
+	normal := tcell.StyleDefault.Background(tcell.ColorSilver).Foreground(tcell.ColorBlack)
+	branch := tcell.StyleDefault.Background(tcell.ColorSilver).Foreground(tcell.ColorNavy).Bold(true)
+
+	xOff := len(menuButtonLabel)
+
+	type cmdRow struct {
+		label string
+		style tcell.Style
+	}
+	var rows []cmdRow
+	if len(a.cmdPath) > 0 {
+		rows = append(rows, cmdRow{label: cmdBackLabel, style: normal})
+	}
+	for _, e := range a.cmdCurrentEntries() {
+		label := e.Label
+		style := normal
+		if len(e.Submenu) > 0 {
+			label += " >"
+			style = branch
+		}
+		rows = append(rows, cmdRow{label: label, style: style})
+	}
+
+	for i, r := range rows {
+		row := make([]rune, a.cmdMenuWidth)
+		for j := range row {
+			row[j] = ' '
+		}
+		copy(row, []rune(" "+r.label))
+		for j, ch := range row {
+			a.screen.SetContent(xOff+j, i+1, ch, nil, r.style)
 		}
 	}
 }
